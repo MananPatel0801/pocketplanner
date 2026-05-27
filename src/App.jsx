@@ -1,14 +1,17 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import useAuthStore from './store/useAuthStore'
+import AppLayout from './components/layout/AppLayout'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import Dashboard from './pages/Dashboard'
 import Transactions from './pages/Transactions'
 
-function ProtectedRoute({ children }) {
+function ProtectedLayout() {
   const { user, loading } = useAuthStore()
   if (loading) return null
-  return user ? children : <Navigate to="/login" replace />
+  if (!user) return <Navigate to="/login" replace />
+  return <AppLayout />
 }
 
 export default function App() {
@@ -24,14 +27,10 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
-        <Route
-          path="/transactions"
-          element={
-            <ProtectedRoute>
-              <Transactions />
-            </ProtectedRoute>
-          }
-        />
+        <Route element={<ProtectedLayout />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/transactions" element={<Transactions />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   )

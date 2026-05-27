@@ -15,9 +15,12 @@ const EMPTY_FORM = {
   date: today(),
 }
 
+const OTHER_SENTINEL = '__other__'
+
 export default function Transactions() {
   const { user } = useAuthStore()
   const [form, setForm] = useState(EMPTY_FORM)
+  const [customCategory, setCustomCategory] = useState('')
   const [categories, setCategories] = useState([])
   const [transactions, setTransactions] = useState([])
   const [formError, setFormError] = useState('')
@@ -50,33 +53,84 @@ export default function Transactions() {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
+  async function resolveOtherCategory() {
+    const name = customCategory.trim()
+    if (!name) return null
+
+    // Reuse existing user category with the same name if it exists
+    const { data: existing } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('user_id', user.id)
+      .ilike('name', name)
+      .maybeSingle()
+
+    if (existing) return existing.id
+
+    const { data: created, error } = await supabase
+      .from('categories')
+      .insert({ user_id: user.id, name, is_system: false })
+      .select('id')
+      .single()
+
+    if (error) throw error
+    return created.id
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     setFormError('')
+
     if (!form.amount || Number(form.amount) <= 0) {
       setFormError('Amount must be greater than 0.')
       return
     }
+
+    const isOther = form.category_id === OTHER_SENTINEL
+
     if (!form.category_id) {
       setFormError('Please select a category.')
       return
     }
-    setSubmitting(true)
-    const { error } = await supabase.from('transactions').insert({
-      user_id: user.id,
-      amount: Number(form.amount),
-      type: form.type,
-      category_id: form.category_id,
-      description: form.description || null,
-      date: form.date,
-    })
-    setSubmitting(false)
-    if (error) {
-      setFormError(error.message)
-    } else {
-      setForm({ ...EMPTY_FORM, date: today() })
-      fetchTransactions()
+    if (isOther && !customCategory.trim()) {
+      setFormError('Please enter a category name.')
+      return
     }
+
+    setSubmitting(true)
+    try {
+      let categoryId = form.category_id
+      if (isOther) {
+        categoryId = await resolveOtherCategory()
+        if (!categoryId) {
+          setFormError('Failed to create category.')
+          setSubmitting(false)
+          return
+        }
+        // Refresh category list so the new one appears next time
+        fetchCategories()
+      }
+
+      const { error } = await supabase.from('transactions').insert({
+        user_id: user.id,
+        amount: Number(form.amount),
+        type: form.type,
+        category_id: categoryId,
+        description: form.description || null,
+        date: form.date,
+      })
+
+      if (error) {
+        setFormError(error.message)
+      } else {
+        setForm({ ...EMPTY_FORM, date: today() })
+        setCustomCategory('')
+        fetchTransactions()
+      }
+    } catch (err) {
+      setFormError(err.message)
+    }
+    setSubmitting(false)
   }
 
   async function handleDelete(id) {
@@ -85,7 +139,7 @@ export default function Transactions() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
+    <div className="p-4 sm:p-8">
       <div className="max-w-2xl mx-auto flex flex-col gap-6">
         <h1 className="text-2xl font-bold text-gray-900">Transactions</h1>
 
@@ -114,13 +168,13 @@ export default function Transactions() {
                     key={t}
                     type="button"
                     onClick={() => setField('type', t)}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors
-                      ${form.type === t
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                      form.type === t
                         ? t === 'income'
                           ? 'bg-green-500 text-white border-green-500'
                           : 'bg-red-500 text-white border-red-500'
                         : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                      }`}
+                    }`}
                   >
                     {t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
@@ -138,10 +192,24 @@ export default function Transactions() {
               >
                 <option value="">Select a category</option>
                 {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
                 ))}
+                <option value={OTHER_SENTINEL}>Other (specify below)</option>
               </select>
             </div>
+
+            {/* Custom category name — shown only when "Other" is selected */}
+            {form.category_id === OTHER_SENTINEL && (
+              <Input
+                label="Category name"
+                type="text"
+                placeholder="e.g. Pet supplies"
+                value={customCategory}
+                onChange={(e) => setCustomCategory(e.target.value)}
+              />
+            )}
 
             {/* Description */}
             <Input
@@ -189,7 +257,7 @@ export default function Transactions() {
                     </p>
                   </div>
                   <span
-                    className={`text-sm font-semibold tabular-nums ${
+                    className={`text-sm font-semibold tabular-nums shrink-0 ${
                       tx.type === 'income' ? 'text-green-500' : 'text-red-500'
                     }`}
                   >
@@ -197,7 +265,7 @@ export default function Transactions() {
                   </span>
                   <button
                     onClick={() => handleDelete(tx.id)}
-                    className="text-xs text-gray-400 hover:text-red-500 transition-colors ml-2"
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors ml-2 shrink-0"
                     aria-label="Delete transaction"
                   >
                     ✕
